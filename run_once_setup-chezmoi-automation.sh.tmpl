@@ -1,0 +1,55 @@
+#!/bin/sh
+# Sætter chezmoi-automatik op på denne maskine (kører én gang via chezmoi).
+# Templated: {{ .chezmoi.homeDir }} udfyldes pr. maskine, så det også
+# virker når brugernavnet IKKE er 'perfriis'.
+set -eu
+
+HOME_DIR="{{ .chezmoi.homeDir }}"
+CHEZMOI_BIN="$HOME_DIR/.local/bin/chezmoi"
+PLIST="$HOME_DIR/Library/LaunchAgents/com.friisconsult.chezmoi-update.plist"
+
+# --- 1) auto-commit/push ---
+mkdir -p "$HOME_DIR/.config/chezmoi"
+cat > "$HOME_DIR/.config/chezmoi/chezmoi.toml" <<'TOML'
+[git]
+    autoCommit = true
+    autoPush = true
+TOML
+
+# --- 2) launchd-agent: 'chezmoi update' ved login + hver 6. time ---
+mkdir -p "$HOME_DIR/Library/LaunchAgents"
+cat > "$PLIST" <<PLISTEOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTD/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.friisconsult.chezmoi-update</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$CHEZMOI_BIN</string>
+        <string>update</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StartInterval</key>
+    <integer>21600</integer>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>$HOME_DIR/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>$HOME_DIR/Library/Logs/chezmoi-update.log</string>
+    <key>StandardErrorPath</key>
+    <string>$HOME_DIR/Library/Logs/chezmoi-update.log</string>
+</dict>
+</plist>
+PLISTEOF
+
+# --- 3) valider + (re)load agenten (idempotent) ---
+plutil -lint "$PLIST"
+launchctl unload "$PLIST" 2>/dev/null || true
+launchctl load "$PLIST"
+
+echo "[chezmoi] automatik opsat: chezmoi.toml skrevet + launchd-agent loaded"
