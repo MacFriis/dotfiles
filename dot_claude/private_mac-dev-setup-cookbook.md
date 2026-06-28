@@ -120,6 +120,11 @@ chezmoi update                   # hent nyeste (git pull + apply)
 
 Så slipper man for at huske `chezmoi cd && git push` og `chezmoi update` manuelt.
 
+> **Sker nu automatisk:** `run_once_setup-chezmoi-automation.sh.tmpl` (i dotfiles-repoet)
+> sætter BÅDE `chezmoi.toml` OG launchd-agenten op ved `chezmoi init --apply` på en ny maskine
+> — stierne udfyldes via `{{ "{{ .chezmoi.homeDir }}" }}`, så det virker uanset brugernavn.
+> Afsnittet nedenfor er manuel reference / til fejlfinding.
+
 **1) Auto-commit + auto-push** — chezmoi committer/pusher selv når man `add`'er eller editerer en sporet fil:
 ```sh
 mkdir -p ~/.config/chezmoi
