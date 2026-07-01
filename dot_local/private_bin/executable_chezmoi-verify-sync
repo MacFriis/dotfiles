@@ -1,0 +1,85 @@
+#!/bin/sh
+# Verificér at chezmoi-sync spiller på DENNE maskine.
+# Tjekker: install, GitHub-adgang, repo up-to-date, config, launchd-agent,
+# og at de vigtige filer faktisk er hentet. Kør: chezmoi-verify-sync
+# (POSIX sh — stopper ikke ved første fejl, samler op til sidst.)
+
+CHEZMOI="$HOME/.local/bin/chezmoi"
+[ -x "$CHEZMOI" ] || CHEZMOI="$(command -v chezmoi 2>/dev/null)"
+LABEL="com.friisconsult.chezmoi-update"
+FAILS=0
+
+ok()   { printf '  ✅ %s\n' "$1"; }
+warn() { printf '  ⚠️  %s\n' "$1"; FAILS=$((FAILS+1)); }
+section() { printf '\n=== %s ===\n' "$1"; }
+
+section "1) chezmoi installeret"
+if [ -n "$CHEZMOI" ] && [ -x "$CHEZMOI" ]; then
+    ok "chezmoi: $CHEZMOI ($("$CHEZMOI" --version | head -1))"
+    SRC="$("$CHEZMOI" source-path 2>/dev/null)"
+    [ -d "$SRC" ] && ok "source: $SRC" || warn "source-path mangler — kør: chezmoi init --apply git@github.com:MacFriis/dotfiles.git"
+else
+    warn "chezmoi ikke fundet — installér og kør 'chezmoi init --apply ...'"
+    printf '\nKan ikke fortsætte uden chezmoi.\n'; exit 1
+fi
+
+section "2) GitHub SSH-adgang"
+if ssh -o BatchMode=yes -o ConnectTimeout=8 -T git@github.com 2>&1 | grep -q "successfully authenticated"; then
+    ok "SSH til github.com virker"
+else
+    warn "SSH til github.com fejler — læg maskinens ed25519-nøgle på GitHub (ssh -T git@github.com)"
+fi
+
+section "3) Repo up-to-date (local vs origin)"
+if [ -d "$SRC/.git" ]; then
+    git -C "$SRC" fetch -q 2>/dev/null
+    LOCAL="$(git -C "$SRC" rev-parse @ 2>/dev/null)"
+    REMOTE="$(git -C "$SRC" rev-parse @{u} 2>/dev/null)"
+    if [ -n "$REMOTE" ] && [ "$LOCAL" = "$REMOTE" ]; then
+        ok "i sync med origin ($(git -C "$SRC" rev-parse --short @))"
+    elif [ -z "$REMOTE" ]; then
+        warn "ingen upstream sat på branchen"
+    else
+        warn "ude af sync — kør: chezmoi update"
+    fi
+else
+    warn "source er ikke et git-repo"
+fi
+
+section "4) Auto-commit/push config"
+TOML="$HOME/.config/chezmoi/chezmoi.toml"
+if [ -f "$TOML" ] && grep -q 'autoCommit *= *true' "$TOML" && grep -q 'autoPush *= *true' "$TOML"; then
+    ok "autoCommit + autoPush = true"
+else
+    warn "chezmoi.toml mangler eller autoCommit/autoPush ikke slået til ($TOML)"
+fi
+
+section "5) launchd-agent (baggrunds-sync)"
+LINE="$(launchctl list 2>/dev/null | grep "$LABEL")"
+if [ -n "$LINE" ]; then
+    CODE="$(printf '%s' "$LINE" | awk '{print $2}')"
+    [ "$CODE" = "0" ] && ok "agent loaded, sidste exit: 0" || warn "agent loaded, men sidste exit: $CODE (se loggen)"
+else
+    warn "agent ikke loaded — kør: launchctl load ~/Library/LaunchAgents/$LABEL.plist"
+fi
+LOG="$HOME/Library/Logs/chezmoi-update.log"
+[ -f "$LOG" ] && printf '     seneste log: %s\n' "$(tail -1 "$LOG")"
+
+section "6) Vigtige filer hentet"
+check_path() {
+    if [ -e "$HOME/$1" ]; then ok "$1"; else warn "$1 mangler — kør: chezmoi apply"; fi
+}
+check_path "Developer/edp/docs/business-model"
+check_path ".claude/mac-dev-setup-cookbook.md"
+
+section "7) Lokale udiffede ændringer (chezmoi status)"
+ST="$("$CHEZMOI" status 2>/dev/null)"
+[ -z "$ST" ] && ok "alt anvendt, intet udestående" || { warn "udestående ændringer:"; printf '%s\n' "$ST" | sed 's/^/       /'; }
+
+printf '\n'
+if [ "$FAILS" -eq 0 ]; then
+    printf '🟢 Alt spiller — synken er sund på denne maskine.\n'
+else
+    printf '🟡 %s ting kræver opmærksomhed (se ⚠️ ovenfor).\n' "$FAILS"
+fi
+exit 0
